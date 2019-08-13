@@ -1,4 +1,6 @@
+#!/usr/bin/env python3
 import os
+import sys
 import tempfile
 import uuid
 from sh import kolibri, zip as zip_files
@@ -195,4 +197,6 @@ class KolibriZipCreator(object):
         )
 
 
-# KolibriZipCreator(manifest_path="test_manifest.json").create()
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        KolibriZipCreator(manifest_path=sys.argv[1]).create()
