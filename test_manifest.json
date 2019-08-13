@@ -1,0 +1,22 @@
+{
+	"job_id": "aaa123",
+	"channels": {"17e25cd51c1842dd87755dcd7cd515a4": {}},
+	"other_files": [
+		{
+			"source": "https://storage.googleapis.com/le-releases/downloads/kolibri/v0.12.7/kolibri-v0.12.7-windows-setup.exe",
+			"destination": "Installers/kolibri-v0.12.7-windows-setup.exe"
+		},
+		{
+			"source": "https://storage.googleapis.com/le-releases/downloads/kolibri/v0.12.7/kolibri_0.12.7-0ubuntu1_all.deb",
+			"destination": "Installers/kolibri_0.12.7-0ubuntu1_all.deb"
+		},
+		{
+			"source": "https://storage.googleapis.com/le-releases/downloads/kolibri/v0.12.7/kolibri-0.12.7.pex",
+			"destination": "Installers/kolibri-0.12.7.pex"
+		},
+		{
+			"source": "https://buildmedia.readthedocs.org/media/pdf/kolibri/release-v0.12.x/kolibri.pdf",
+			"destination": "Documentation/Kolibri_Documentation_v0.12.7.pdf"
+		}
+	]
+}

@@ -2,3 +2,5 @@ kolibri
 humanfriendly
 sh
 ipython
+envcontext
+oss2

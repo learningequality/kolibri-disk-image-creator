@@ -1,114 +1,198 @@
-import humanfriendly
 import os
 import tempfile
 import uuid
-from sh import fallocate, parted, losetup, mkfs, mount, umount, kolibri
+from sh import kolibri, zip as zip_files
+from envcontext import EnvironmentContext as EnvContext
+from shutil import copyfile
+import hashlib
+import urllib.request
+import configparser
+import json
+import oss2
+
+DATA_ROOT = os.environ.get("KOLIBRI_ZIP_DATA_ROOT", "/tmp")
+
+CACHE_KOLIBRI_HOME = os.environ.get(
+    "CACHE_KOLIBRI_HOME", os.path.join(DATA_ROOT, "kolibrihomecache")
+)
+CACHE_CONTENT_PARENT_DIR = os.environ.get(
+    "CACHE_CONTENT_PARENT_DIR", os.path.join(DATA_ROOT, "contentcache")
+)
+CACHE_CONTENT_DIR = os.path.join(CACHE_CONTENT_PARENT_DIR, "content")
+TEMP_ZIP_CONTENTS_ROOT = os.environ.get(
+    "TEMP_ZIP_CONTENTS_ROOT", os.path.join(DATA_ROOT, "zipcontents")
+)
+TEMP_KOLIBRI_HOME_ROOT = os.environ.get(
+    "TEMP_KOLIBRI_HOME_ROOT", os.path.join(DATA_ROOT, "kolibrihomes")
+)
+ZIP_ROOT = os.environ.get("ZIP_ROOT", os.path.join(DATA_ROOT, "zips"))
+TEMP_FILE_DOWNLOAD_DIR = os.environ.get(
+    "TEMP_FILE_DOWNLOAD_DIR", os.path.join(DATA_ROOT, "tempfiles")
+)
 
 
-class KolibriContentSelection(object):
-    def __init__(
-        self,
-        channel_id,
-        include_node_ids=None,
-        exclude_node_ids=None,
-        method="network",
-        path="https://studio.learningequality.org/",
-    ):
-        self.channel_id = channel_id
-        self.include_node_ids = include_node_ids
-        self.exclude_node_ids = exclude_node_ids
-        self.method = method
-        self.path = path
+def ensure_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
-    def run_import(self):
-        print("Importing content from channel {}...".format(self.channel_id))
+
+ensure_dir(TEMP_ZIP_CONTENTS_ROOT)
+ensure_dir(TEMP_KOLIBRI_HOME_ROOT)
+ensure_dir(ZIP_ROOT)
+ensure_dir(TEMP_FILE_DOWNLOAD_DIR)
+
+
+class KolibriContentImporter(object):
+    def __init__(self, channels, source="https://studio.learningequality.org/"):
+        self.channels = channels
+        self.source = source
+
+        if self.source.startswith("http"):
+            self.method = "network"
+            self.extra_arguments = ["--baseurl", self.source]
+        else:
+            self.method = "disk"
+            self.extra_arguments = [self.source]
+
+    def import_all_channels(self):
+        for channel_id in self.channels:
+            self.import_specific_channel(channel_id)
+
+    def import_specific_channel(self, channel_id):
+
+        assert channel_id in self.channels
+
+        print("Importing content from channel {}...".format(channel_id))
+
+        include_node_ids = self.channels[channel_id].get("include_node_ids", None)
+        exclude_node_ids = self.channels[channel_id].get("exclude_node_ids", None)
 
         try:
 
             # download the channel database
-            kolibri("manage", "importchannel", "network", self.channel_id, _in="y\n")
+            kolibri(
+                "manage",
+                "importchannel",
+                self.method,
+                channel_id,
+                *self.extra_arguments,
+                _in="y\n"
+            )
 
-            # download the requested contnt from the channel
-            args = ["manage", "importcontent", "network", self.channel_id]
-            if self.include_node_ids:
-                args += ["--node_ids", ",".join(self.include_node_ids)]
-            if self.exclude_node_ids:
-                args += ["--exclude_node_ids", ",".join(self.exclude_node_ids)]
+            # download the requested content for the channel
+            args = [
+                "manage",
+                "importcontent",
+                self.method,
+                channel_id,
+            ] + self.extra_arguments
+            if include_node_ids:
+                args += ["--node_ids", ",".join(include_node_ids)]
+            if exclude_node_ids:
+                args += ["--exclude_node_ids", ",".join(exclude_node_ids)]
             kolibri(*args, _in="y\n")
 
         except Exception as e:
             error = e.stderr.decode()
-            print("ERROR DOWNLOADING CHANNEL {}...".format(self.channel_id))
+            print("ERROR DOWNLOADING CHANNEL {}...".format(channel_id))
             print(error)
 
 
-class KolibriDiskImageCreator(object):
-    def __init__(self, content_list, disk_size="100MB", image_path="/tmp"):
-        self.content_list = content_list
-        self.disk_size_bytes = humanfriendly.parse_size(disk_size)
-        if not image_path.endswith(".img"):
-            image_path = os.path.join(image_path, uuid.uuid4().hex + ".img")
-        self.image_path = image_path
-        self.mount_path = tempfile.mkdtemp()
-        os.environ["KOLIBRI_HOME"] = os.path.join(self.mount_path, "KOLIBRI_DATA")
-        os.environ["KOLIBRI_RUN_MODE"] = "kolibridiskimagecreator"
-        self.mounted = False
-        self.loop = None
+def upload_to_oss(path):
+    config = configparser.ConfigParser()
+    config.read(os.path.expanduser("~/.ossutilconfig"))
+    OSS_ENDPOINT = config["Credentials"]["endpoint"]
+    OSS_ACCESS_KEY_ID = config["Credentials"]["accessKeyID"]
+    OSS_ACCESS_KEY_SECRET = config["Credentials"]["accessKeySecret"]
+    OSS_BUCKET = "kolibri"
+
+    oss_auth = oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET)
+    bucket = oss2.Bucket(oss_auth, OSS_ENDPOINT, OSS_BUCKET)
+    filename = os.path.split(path)[1]
+    oss2.resumable_upload(bucket, filename, path)
+
+
+def download_file(url):
+    url_hash = hashlib.md5(url.encode()).hexdigest()
+    target_path = os.path.join(TEMP_FILE_DOWNLOAD_DIR, url_hash)
+    if not os.path.exists(target_path):
+        print("Downloading file:", url)
+        urllib.request.urlretrieve(url, target_path)
+        print("Download complete!")
+    else:
+        print("File already exists, so no need to download:", url)
+    return target_path
+
+
+class KolibriZipCreator(object):
+    def __init__(self, manifest_path):
+        with open(manifest_path) as f:
+            self.manifest = json.load(f)
+        self.job_id = self.manifest["job_id"]
 
     def create(self):
-        self.init_image()
-        self.mount()
-        for selection in self.content_list:
-            selection.run_import()
-        self.unmount()
-        print("Finished creating disk image at: {}".format(self.image_path))
-        return self.image_path
 
-    def init_image(self):
-        fallocate("-l", str(self.disk_size_bytes), self.image_path)
-        output = parted(
-            self.image_path,
-            "mklabel",
-            "msdos",
-            "mkpart",
-            "primary",
-            "fat32",
-            "2048s",
-            "100%",
-            "print",
+        # Download all channel content (as needed) into content cache.
+        with EnvContext(
+            KOLIBRI_HOME=CACHE_KOLIBRI_HOME, KOLIBRI_CONTENT_DIR=CACHE_CONTENT_DIR
+        ):
+            print(
+                "\nSTARTING: Download all channel content (as needed) into content cache."
+            )
+            KolibriContentImporter(self.manifest["channels"]).import_all_channels()
+            print(
+                "COMPLETED: Download all channel content (as needed) into content cache."
+            )
+
+        # Set up the paths for assembling content and building zip file.
+        temp_kolibri_home = os.path.join(TEMP_KOLIBRI_HOME_ROOT, self.job_id)
+        temp_zip_root_dir = os.path.join(TEMP_ZIP_CONTENTS_ROOT, self.job_id, "")
+        temp_content_dir = os.path.join(temp_zip_root_dir, "KOLIBRI_DATA", "content")
+        zip_file_path = (
+            os.path.join(ZIP_ROOT, self.job_id) + "_to_unzip_onto_usb_key.zip"
         )
-        self.offset = (
-            [line for line in output.split("\n") if line.strip().startswith("1 ")][0]
-            .split()[1]
-            .replace("B", "")
+
+        # Import content across into temporary content directory.
+        with EnvContext(
+            KOLIBRI_HOME=temp_kolibri_home, KOLIBRI_CONTENT_DIR=temp_content_dir
+        ):
+            print("\nSTARTING: Import content across into temporary content directory.")
+            KolibriContentImporter(
+                self.manifest["channels"], source=CACHE_CONTENT_PARENT_DIR
+            ).import_all_channels()
+            print("COMPLETED: Import content across into temporary content directory.")
+
+        # Download and copy standard common files into root of path.
+        print("\nSTARTING: Download and copy standard common files into root of path.")
+        for file in self.manifest["other_files"]:
+            source_path = download_file(file["source"])
+            dest_path = os.path.join(temp_zip_root_dir, file["destination"])
+
+            # ensure the folder we're copying into exists
+            ensure_dir(os.path.dirname(dest_path))
+
+            copyfile(source_path, dest_path)
+        print("COMPLETED: Download and copy standard common files into root of path.")
+
+        # Bundle up the content in the temporary directory into a zip file.
+        print(
+            "\nSTARTING: Bundle up the content in the temporary directory into a zip file."
         )
-        self._ensure_loopback_device()
-        mkfs("-t", "vfat", "-F", "32", self.loop)
+        zip_files(zip_file_path, "-r", ".", _cwd=temp_zip_root_dir)
+        print(
+            "COMPLETED: Bundle up the content in the temporary directory into a zip file."
+        )
 
-    def _ensure_loopback_device(self):
-        if not self.loop:
-            self.loop = losetup(
-                "--partscan", "--show", "--find", self.image_path
-            ).strip()
+        # Push zip file to OSS.
+        print("\nSTARTING: Push zip file to OSS.")
+        upload_to_oss(zip_file_path)
+        print("COMPLETED: Push zip file to OSS.")
 
-    def mount(self):
-        assert not self.mounted, "Image has already been mounted"
-        assert self.offset, "Image must first be initialized with init_image"
-        self._ensure_loopback_device()
-        mount(self.loop, self.mount_path)
-        self.mounted = True
-
-    def unmount(self):
-        assert self.mounted, "Image is not mounted"
-        umount(self.mount_path)
-        losetup("-d", self.loop)
-        self.loop = None
-        self.mounted = False
+        print(
+            "Should now be available at:",
+            "https://kolibri.oss-cn-shenzhen.aliyuncs.com/"
+            + os.path.split(zip_file_path)[1],
+        )
 
 
-# c = KolibriDiskImageCreator(
-#     content_list=[
-#         KolibriContentSelection(channel_id="17e25cd51c1842dd87755dcd7cd515a4")
-#     ]
-# )
-# c.create()
+# KolibriZipCreator(manifest_path="test_manifest.json").create()
