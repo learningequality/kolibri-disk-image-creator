@@ -82,17 +82,13 @@ class KolibriContentImporter(object):
             )
 
             # download the requested content for the channel
-            args = [
-                "manage",
-                "importcontent",
-                self.method,
-                channel_id,
-            ] + self.extra_arguments
+            args = ["manage", "importcontent"]
             if include_node_ids:
                 args += ["--node_ids", ",".join(include_node_ids)]
             if exclude_node_ids:
                 args += ["--exclude_node_ids", ",".join(exclude_node_ids)]
-            kolibri(*args, _in="y\n")
+            args += [self.method, channel_id]
+            kolibri(*(args + self.extra_arguments), _in="y\n")
 
         except Exception as e:
             error = e.stderr.decode()
