@@ -1,13 +1,6 @@
 {
-	"job_id": "common_english_64gb",
-	"channels": {
-		"197934f144305350b5820c7c4dd8e194": {"name": "PhET Interactive Simulations (en)"},
-		"1d8f6d84618153c18c695d85074952a7": {"name": "CK-12"},
-		"f9d3e0e46ea25789bbed672ff6a399ed": {"name": "African Storybook"},
-		"e409b964366a59219c148f2aaa741f43": {"name": "Blockly Games"},
-		"000409f81dbe5d1ba67101cb9fed4530": {"name": "Touchable Earth (en)"},
-		"1ceff53605e55bef987d88e0908658c5": {"name": "Khan Academy (en)", "include_node_ids": ["c6edbc3129c55ba99125266c3effa234", "41ca303fe94a593486a04f956d4b53e4", "654edc3be0a65e98937ccf2c4ee8cab9", "b63838e906b25050800a7aaba2f1b4af", "09afa3e6243650b49ad48c6d05328e5a"]}
-	},
+	"job_id": "aaa123",
+	"channels": {"17e25cd51c1842dd87755dcd7cd515a4": {}},
 	"other_files": [
 		{
 			"source": "https://storage.googleapis.com/le-releases/downloads/kolibri/v0.12.7/kolibri-v0.12.7-windows-setup.exe",
